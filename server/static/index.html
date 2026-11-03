@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#f7f7f7" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<title>近传 NearDrop</title>
+<link rel="stylesheet" href="static/style.css" />
+</head>
+<body>
+
+<div id="app">
+  <aside class="sidebar">
+    <div class="side-head">
+      <div class="me-avatar" id="meAvatar">我</div>
+      <div class="me-info">
+        <div class="me-name" id="meName">连接中…</div>
+        <div class="me-sub" id="meSub">本机</div>
+      </div>
+      <button class="icon-btn" id="btnDevices" title="设备列表">👥</button>
+      <button class="icon-btn" id="btnInvite" title="邀请设备">⊞</button>
+      <button class="icon-btn" id="btnSettings" title="设置">⚙</button>
+    </div>
+    <div class="conv-list" id="convList"></div>
+    <div class="side-foot">
+      <div class="state" id="connState"><i></i><span>已连接</span></div>
+      <div id="footInfo"></div>
+    </div>
+  </aside>
+
+  <main class="chat" id="chatPane">
+    <header class="chat-head">
+      <button class="icon-btn only-mobile" id="btnBack">‹</button>
+      <div class="title-wrap">
+        <div id="chatTitle">公共频道</div>
+        <div id="chatSub">所有设备都能看到</div>
+      </div>
+      <button class="icon-btn" id="btnChatMenu">⋯</button>
+    </header>
+
+    <div class="msg-list" id="msgList"></div>
+
+    <div class="composer">
+      <button class="icon-btn" id="btnMore" title="更多">＋</button>
+      <div class="input-wrap">
+        <textarea id="textInput" rows="1" placeholder="发消息…"></textarea>
+        <button class="icon-btn" id="btnVoice" title="语音">🎙</button>
+      </div>
+      <button class="btn-send" id="btnSend" disabled>发送</button>
+    </div>
+
+    <div class="more-panel" id="morePanel">
+      <button data-act="image"><b>🖼</b>图片</button>
+      <button data-act="video"><b>🎬</b>视频</button>
+      <button data-act="file"><b>📄</b>文件</button>
+      <button data-act="camera"><b>📷</b>拍照</button>
+    </div>
+
+    <div class="uploading" id="uploadBox">
+      <div id="uploadLabel">正在发送…</div>
+      <div class="bar"><i id="uploadBar"></i></div>
+    </div>
+  </main>
+</div>
+
+<!-- 预览层 -->
+<div class="modal" id="viewer">
+  <div class="viewer-box">
+    <div id="viewerBody"></div>
+    <div class="viewer-actions">
+      <button class="primary" id="viewerSave">保存到相册</button>
+      <button id="viewerClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 访问口令 -->
+<div class="modal auth-modal" id="authLayer">
+  <div class="sheet">
+    <h3>输入访问码</h3>
+    <p class="hint">为了不让同一个 Wi-Fi 下的其他人随便连进来。<br>6 位访问码在电脑端界面右上角「👥」里，或托盘菜单里。<br><b>每台设备只需输一次</b>，之后换网络、换 IP 都会自动连。</p>
+    <div class="field">
+      <input id="authCode" inputmode="numeric" maxlength="6" placeholder="6 位数字" autocomplete="off" />
+    </div>
+    <div class="auth-err" id="authErr"></div>
+    <div class="sheet-actions">
+      <button class="ghost" id="authScan">换一个地址</button>
+      <button class="primary" id="authGo">进入</button>
+    </div>
+  </div>
+</div>
+
+<!-- 设备列表 -->
+<div class="modal" id="devices">
+  <div class="sheet">
+    <h3>设备与地址</h3>
+    <p class="hint">同一个 Wi-Fi 下的设备都通过这台电脑中转，手机之间不用互相直连。</p>
+    <div class="dev-me">我的地址：<b id="devMeIp">—</b></div>
+    <div class="dev-list" id="devList"></div>
+    <div class="dev-server" id="devServer"></div>
+    <div class="sheet-actions" style="justify-content:center">
+      <button class="ghost" id="devClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 设置 -->
+<div class="modal" id="settings">
+  <div class="sheet">
+    <h3>设置</h3>
+    <p class="hint" id="setHint">这台设备的名称会显示在对方的聊天列表里。</p>
+    <div class="field">
+      <label>本机名称</label>
+      <input id="setName" maxlength="20" placeholder="例如：剪辑电脑" />
+    </div>
+    <div class="field">
+      <label>服务器地址</label>
+      <input id="setServer" placeholder="http://192.168.1.10:8787" />
+    </div>
+    <div class="field">
+      <label>访问码（新设备连接时输入）</label>
+      <div class="code-row">
+        <span class="code-badge" id="setCode">------</span>
+        <button class="ghost" id="setResetCode">换一个</button>
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button class="ghost" id="setCancel">取消</button>
+      <button class="primary" id="setSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 邀请/二维码 -->
+<div class="modal" id="invite">
+  <div class="sheet">
+    <h3>用手机连上来</h3>
+    <p class="hint">手机和电脑连同一个 Wi-Fi，扫这个码，或直接在浏览器输入地址。</p>
+    <div class="qr-wrap">
+      <img id="qrImg" alt="二维码" />
+      <div class="qr-url" id="qrUrl"></div>
+      <div class="qr-code" id="qrCodeHint"></div>
+    </div>
+    <div class="sheet-actions" style="justify-content:center">
+      <button class="ghost" id="inviteClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 录音 -->
+<div class="rec-layer" id="recLayer">
+  <div class="rec-card">
+    <div class="rec-time" id="recTime">0:00</div>
+    <div class="rec-hint">正在录音…</div>
+    <div class="rec-actions">
+      <button class="cancel" id="recCancel">取消</button>
+      <button class="stop" id="recStop">发送</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<input type="file" id="pickImage" accept="image/*" multiple style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0" />
+<input type="file" id="pickVideo" accept="video/*" multiple style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0" />
+<input type="file" id="pickFile" multiple style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0" />
+<input type="file" id="pickCamera" accept="image/*" capture="environment" style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0" />
+
+<script src="static/app.js"></script>
+</body>
+</html>

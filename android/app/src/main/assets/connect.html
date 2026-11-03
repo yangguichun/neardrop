@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>连接电脑 · 近传</title>
+<style>
+  :root { --brand:#2563eb; --text:#191919; --text2:#8a8a8a; --line:#e6e6e6; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; min-height: 100vh; background: #f7f7f7; color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex; justify-content: center; padding: 0 20px 40px;
+  }
+  .wrap { width: 100%; max-width: 420px; padding-top: 48px; text-align: center; }
+  .logo {
+    width: 72px; height: 72px; border-radius: 22px; margin: 0 auto 16px;
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    color: #fff; font-size: 32px; font-weight: 600;
+    display: grid; place-items: center;
+    box-shadow: 0 10px 26px rgba(37, 99, 235, .28);
+  }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  .sub { font-size: 13px; color: var(--text2); margin: 0 0 22px; line-height: 1.6; }
+  .list { text-align: left; }
+  .hint {
+    font-size: 13px; color: var(--text2); line-height: 1.8;
+    background: #fff; border-radius: 12px; padding: 16px; text-align: center;
+  }
+  .item {
+    background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px;
+    display: flex; flex-direction: column; gap: 3px;
+    border: 1px solid var(--line);
+  }
+  .item:active { background: #eef3ff; }
+  .item b { font-size: 15px; font-weight: 500; }
+  .item span { font-size: 12px; color: var(--text2); }
+  .btn {
+    width: 100%; margin-top: 14px; padding: 13px; border-radius: 12px;
+    background: var(--brand); color: #fff; font-size: 15px; border: 0;
+  }
+  .btn.ghost { background: #fff; color: var(--text); border: 1px solid var(--line); }
+  .manual { margin-top: 18px; display: flex; gap: 8px; }
+  .manual input {
+    flex: 1; padding: 12px 14px; border-radius: 12px;
+    border: 1px solid var(--line); background: #fff; font-size: 14px; outline: none;
+    min-width: 0;
+  }
+  .manual input:focus { border-color: var(--brand); }
+  .manual button {
+    padding: 0 18px; border-radius: 12px; border: 0;
+    background: #191919; color: #fff; font-size: 14px;
+  }
+  .tip { margin-top: 26px; font-size: 12px; color: var(--text2); line-height: 1.8; text-align: left; }
+  .tip b { color: #444; font-weight: 500; }
+
+  /* 访问码 */
+  .code-box {
+    display: none; margin-top: 16px; background: #fff; border: 1px solid var(--line);
+    border-radius: 14px; padding: 18px 16px;
+  }
+  .code-box.show { display: block; }
+  .code-title { font-size: 14px; margin-bottom: 4px; }
+  .code-url { font-size: 12px; color: var(--text2); margin-bottom: 12px; }
+  .code-box input {
+    width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--line);
+    font-size: 22px; letter-spacing: 8px; text-align: center; outline: none;
+    background: #fafafa;
+  }
+  .code-box input:focus { border-color: var(--brand); background: #fff; }
+  .code-row { display: flex; gap: 8px; margin-top: 12px; }
+  .code-row button {
+    flex: 1; padding: 12px; border-radius: 12px; border: 0; font-size: 15px;
+  }
+  .code-row .primary { background: var(--brand); color: #fff; }
+  .code-row .ghost { background: #f2f2f2; color: var(--text); }
+  .err { color: #e5484d; font-size: 12px; min-height: 16px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">传</div>
+  <h1>连接电脑</h1>
+  <p class="sub" id="sub">手机和电脑连同一个 Wi-Fi，会自动找到它</p>
+
+  <div class="list" id="list">
+    <div class="hint">正在同一 Wi-Fi 下查找电脑…</div>
+  </div>
+
+  <button class="btn ghost" id="rescan" style="margin-top:10px">重新搜索</button>
+
+  <div class="manual">
+    <input id="addr" placeholder="手动输入，如 192.168.1.10:8787" />
+    <button id="go">连接</button>
+  </div>
+
+  <div class="code-box" id="codeBox">
+    <div class="code-title">输入访问码</div>
+    <div class="code-url" id="codeUrl"></div>
+    <input id="code" inputmode="numeric" maxlength="6" placeholder="6 位数字" autocomplete="off" />
+    <div class="err" id="codeErr"></div>
+    <div class="code-row">
+      <button class="ghost" id="codeCancel">取消</button>
+      <button class="primary" id="codeGo">连接</button>
+    </div>
+  </div>
+
+  <div class="tip">
+    <b>访问码在哪：</b>电脑端界面右上角「👥」，或托盘菜单里。<br>
+    <b>验证过一次就记住了：</b>以后换 Wi-Fi、换 IP 都会自动连回来，除非在电脑上把它移出。<br>
+    <b>找不到电脑：</b>确认电脑上「近传」开着、防火墙放行了专用网络。
+  </div>
+</div>
+
+<script>
+  var pendingUrl = '';
+  var pendingSid = '';
+  var autoMode = location.search.indexOf('auto=1') >= 0;
+  var scanning = false;
+  var autoTimer = null;
+  var picked = false;
+
+  function $(id) { return document.getElementById(id); }
+
+  // 身份：服务器编号(sid) + 设备编号 + 设备凭证，三者组合决定要不要输访问码
+  function sidKey(sid) { return 'nd_dtok:' + sid; }
+  function rnd() {
+    var s = '';
+    for (var i = 0; i < 12; i++) s += '0123456789abcdef'[Math.floor(Math.random() * 16)];
+    return s;
+  }
+  function getDeviceId() {
+    var v = '';
+    try { v = window.NearDrop.getDeviceId() || ''; } catch (e) {}
+    if (!v) { try { v = localStorage.getItem('nd_device_id') || ''; } catch (e) {} }
+    if (!v) { v = 'd_' + rnd(); }
+    try { localStorage.setItem('nd_device_id', v); } catch (e) {}
+    return v;
+  }
+  function getHwId() {
+    try { return window.NearDrop.getHwId() || ''; } catch (e) { return ''; }
+  }
+  function devName() {
+    var n = '';
+    try { n = localStorage.getItem('nd_device_name') || ''; } catch (e) {}
+    if (!n) n = /Android/i.test(navigator.userAgent) ? '安卓手机' : '浏览器';
+    return n;
+  }
+  function isCustomName() {
+    try { return localStorage.getItem('nd_name_custom') === '1'; } catch (e) { return false; }
+  }
+
+  function dtokOf(sid) {
+    if (!sid) return '';
+    try { return localStorage.getItem(sidKey(sid)) || ''; } catch (e) { return ''; }
+  }
+  // 服务器列表：sid -> {url, name, at}。换网络后 IP 变了，但 sid 不变，靠它认回同一台电脑
+  function serverMap() {
+    try { return JSON.parse(localStorage.getItem('nd_servers') || '{}') || {}; } catch (e) { return {}; }
+  }
+  function rememberServer(sid, url, name) {
+    if (!sid) return;
+    var m = serverMap();
+    m[sid] = { url: url, name: name || '', at: Date.now() };
+    try { localStorage.setItem('nd_servers', JSON.stringify(m)); } catch (e) {}
+    try { localStorage.setItem('nd_sid:' + url, sid); } catch (e) {}
+  }
+  function cachedSid(url) {
+    try { return localStorage.getItem('nd_sid:' + url) || ''; } catch (e) { return ''; }
+  }
+  function cachedList() {
+    var m = serverMap(), out = [];
+    for (var k in m) {
+      if (!m.hasOwnProperty(k)) continue;
+      out.push({ sid: k, url: m[k].url, name: m[k].name || '上次用的电脑', cached: true, at: m[k].at || 0 });
+    }
+    out.sort(function (a, b) { return b.at - a.at; });
+    return out;
+  }
+
+  function health(url) {
+    return fetch(url + '/api/health', { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error('bad');
+      return r.json();
+    });
+  }
+
+  function renderList(arr) {
+    var list = $('list');
+    if (!arr.length) {
+      var c = cachedList();
+      if (c.length) {
+        var memo = '没有扫到电脑，先试试上次连过的：';
+        list.innerHTML = '<div class="hint" style="margin-bottom:10px">' + memo + '</div>' +
+          c.map(function (s) {
+            return '<div class="item" data-url="' + s.url + '" data-sid="' + (s.sid || '') + '">' +
+              '<b>' + s.name + '</b><span>' + s.url + (dtokOf(s.sid) ? ' · 已记住' : '') + '</span></div>';
+          }).join('');
+      } else {
+        list.innerHTML = '<div class="hint">没找到电脑<br>确认「近传」已经打开，并且手机连的是同一个 Wi-Fi<br>也可以手动输入下面的地址</div>';
+      }
+      bindItems();
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < arr.length; i++) {
+      var s = arr[i];
+      var remembered = dtokOf(s.sid) ? ' · 已验证' : '';
+      html += '<div class="item" data-url="' + s.url + '" data-sid="' + (s.sid || '') + '">' +
+        '<b>' + s.name + '</b><span>' + s.url + remembered + '</span></div>';
+    }
+    list.innerHTML = html;
+    bindItems();
+  }
+
+  function bindItems() {
+    var items = $('list').querySelectorAll('.item');
+    for (var j = 0; j < items.length; j++) {
+      (function (el) {
+        el.onclick = function () {
+          pick(el.getAttribute('data-url'), el.getAttribute('data-sid') || '');
+        };
+      })(items[j]);
+    }
+  }
+
+  function scan(quiet) {
+    if (scanning) return;
+    scanning = true;
+    if (!quiet) $('list').innerHTML = '<div class="hint">正在同一 Wi-Fi 下查找电脑…</div>';
+    setTimeout(function () {
+      var arr = [];
+      try { arr = JSON.parse(window.NearDrop.discover() || '[]'); } catch (e) { arr = []; }
+      scanning = false;
+      for (var i = 0; i < arr.length; i++) {
+        if (!arr[i].sid) arr[i].sid = cachedSid(arr[i].url);
+      }
+      renderList(arr);
+      // 自动模式：优先连「以前验证过」的那台，其次是第一台
+      if (autoMode && arr.length && !picked) {
+        var chosen = arr[0];
+        for (var k = 0; k < arr.length; k++) {
+          if (dtokOf(arr[k].sid)) { chosen = arr[k]; break; }
+        }
+        pick(chosen.url, chosen.sid, true);
+      }
+    }, 60);
+  }
+
+  /** 有凭证就直接进，没有就问访问码 */
+  function pick(url, sid, auto) {
+    picked = true;
+    pendingUrl = String(url).replace(/\/+$/, '');
+    pendingSid = sid || cachedSid(pendingUrl);
+    var id = getDeviceId();
+
+    function decide(sid2) {
+      pendingSid = sid2 || pendingSid;
+      var t = dtokOf(pendingSid);
+      if (!t) { askCode(); return; }
+      // 凭证还认不认，由电脑说了算；认就直接进，不用再输码
+      fetch(pendingUrl + '/api/devices?device=' + encodeURIComponent(id), {
+        cache: 'no-store',
+        headers: { 'X-ND-Device': id, 'X-ND-Device-Token': t }
+      }).then(function (r) {
+        if (r.ok) connect();
+        else askCode('这台电脑已经不认识这台手机了，输一次访问码就好');
+      }).catch(function () { askCode('连不上这台电脑，重新输一次访问码'); });
+    }
+
+    if (pendingSid) { decide(pendingSid); return; }
+    // 不知道 sid 就先问一下电脑（/api/health 不需要口令）
+    health(pendingUrl).then(function (h) {
+      if (!h || !h.ok) throw new Error('bad');
+      rememberServer(h.server_id || '', pendingUrl, h.name || '');
+      decide(h.server_id || '');
+    }).catch(function () {
+      askCode('这台电脑没有响应');
+    });
+  }
+
+  function askCode(msg) {
+    stopAuto();
+    $('codeUrl').textContent = pendingUrl;
+    $('codeErr').textContent = msg || '';
+    $('codeBox').classList.add('show');
+    $('code').value = '';
+    setTimeout(function () { try { $('code').focus(); } catch (e) {} }, 120);
+  }
+
+  function connect() {
+    stopAuto();
+    rememberServer(pendingSid, pendingUrl, '');
+    window.NearDrop.setServer(pendingUrl);
+  }
+
+  function submitCode() {
+    var code = ($('code').value || '').replace(/\D/g, '').slice(0, 6);
+    if (code.length !== 6) { $('codeErr').textContent = '请输入 6 位数字'; return; }
+    $('codeErr').textContent = '正在验证…';
+    $('codeGo').disabled = true;
+    var id = getDeviceId();
+    fetch(pendingUrl + '/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code: code, device_id: id, name: devName(),
+        kind: 'phone', hw_id: getHwId(), custom: isCustomName() ? 1 : 0
+      })
+    }).then(function (r) {
+      if (!r.ok) throw new Error('bad');
+      return r.json();
+    }).then(function (d) {
+      // 主机 token 按地址记（兼容老版本），设备凭证按服务器编号记（换 IP 也不丢）
+      try { localStorage.setItem('nd_tok:' + pendingUrl, d.token || ''); } catch (e) {}
+      if (d.server_id) pendingSid = d.server_id;
+      if (d.device_token && pendingSid) {
+        try { localStorage.setItem(sidKey(pendingSid), d.device_token); } catch (e) {}
+      }
+      if (d.device && d.device.id) {
+        try { localStorage.setItem('nd_device_id', d.device.id); } catch (e) {}
+        if (!isCustomName() && d.device.name) {
+          try { localStorage.setItem('nd_device_name', d.device.name); } catch (e) {}
+        }
+      }
+      rememberServer(pendingSid, pendingUrl, '');
+      $('codeGo').disabled = false;
+      connect();
+    }).catch(function () {
+      $('codeGo').disabled = false;
+      $('codeErr').textContent = '访问码不对，看一眼电脑上的显示';
+    });
+  }
+
+  function stopAuto() {
+    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  }
+
+  $('rescan').onclick = function () { $('codeBox').classList.remove('show'); picked = false; scan(false); };
+  $('codeGo').onclick = submitCode;
+  $('codeCancel').onclick = function () {
+    $('codeBox').classList.remove('show');
+    picked = false;
+    scan(true);
+  };
+  $('code').addEventListener('input', function (e) {
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+  });
+  $('code').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') submitCode();
+  });
+
+  $('go').onclick = function () {
+    var v = $('addr').value.trim();
+    if (!v) return;
+    var url = v.indexOf('://') >= 0 ? v : ('http://' + v);
+    if (!/:\d+$/.test(url)) url += ':8787';
+    pick(url, cachedSid(url));
+  };
+  $('addr').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') $('go').click();
+  });
+
+  // 先试上次那台（UDP 万一被防火墙挡了还能连上），再扫全网
+  (function bootScan() {
+    var c = cachedList();
+    if (c.length) {
+      var done = false;
+      health(c[0].url).then(function (h) {
+        if (done) return;
+        done = true;
+        if (h && h.ok) {
+          rememberServer(h.server_id || c[0].sid, c[0].url, c[0].name);
+          if (autoMode) pick(c[0].url, h.server_id || c[0].sid, true);
+        }
+      }).catch(function () {});
+    }
+    scan(false);
+  })();
+
+  // 自动模式：每 4 秒重扫一次，直到连上
+  if (autoMode) {
+    $('sub').textContent = '上次的地址连不上，正在重新找电脑…';
+    autoTimer = setInterval(function () {
+      if (!$('codeBox').classList.contains('show') && !scanning) scan(true);
+    }, 4000);
+  }
+</script>
+</body>
+</html>

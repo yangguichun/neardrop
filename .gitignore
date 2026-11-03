@@ -1,0 +1,37 @@
+# Python 虚拟环境与缓存
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# PyInstaller 打包中间产物
+dist/
+dist_new*/
+build/out/
+build/pyi/
+build/*.spec
+
+# 安卓构建产物
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.iml
+
+# 临时测试目录（本地调试用，不入库）
+.tmp/
+
+# 运行时数据
+*.log
+*.broken
+*.db
+*.db-wal
+*.db-shm
+
+# 交付目录里展开的 exe 目录：与 zip 内容一致，只保留 zip
+交付/近传 NearDrop/
+
+# 系统
+Thumbs.db
+.DS_Store

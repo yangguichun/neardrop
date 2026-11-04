@@ -20,6 +20,7 @@
         <div class="me-sub" id="meSub">本机</div>
       </div>
       <button class="icon-btn" id="btnDevices" title="设备列表">👥</button>
+      <button class="icon-btn" id="btnSpeed" title="测速">⚡</button>
       <button class="icon-btn" id="btnInvite" title="邀请设备">⊞</button>
       <button class="icon-btn" id="btnSettings" title="设置">⚙</button>
     </div>
@@ -169,6 +170,37 @@
     <div class="sheet-actions">
       <button class="ghost" id="setCancel">取消</button>
       <button class="primary" id="setSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 测速 -->
+<div class="modal" id="speed">
+  <div class="sheet">
+    <h3>测速</h3>
+    <p class="hint">数据只在本机和这台电脑之间跑，不进聊天记录、不写磁盘。</p>
+
+    <div class="sp-grid">
+      <div class="sp-cell"><b id="spPing">–</b><em>延迟</em></div>
+      <div class="sp-cell"><b id="spDown">–</b><em>下载（电脑→我）</em></div>
+      <div class="sp-cell"><b id="spUp">–</b><em>上传（我→电脑）</em></div>
+    </div>
+    <button class="primary wide" id="spLocalRun">测我这台到电脑</button>
+
+    <div class="sp-sep"><span>两台设备互测</span></div>
+    <div class="field">
+      <label>对方设备</label>
+      <select id="spTarget"><option value="">选择一台在线设备</option></select>
+    </div>
+    <div class="sp-grid sp-pair">
+      <div class="sp-cell"><b id="spSend">–</b><em id="spSendLabel">我这台发出去</em></div>
+      <div class="sp-cell"><b id="spRecv">–</b><em id="spRecvLabel">对端收到</em></div>
+    </div>
+    <p class="hint" id="spTip">对方会收到邀请，并自动打开这个面板。两台手机、手机和电脑、两台电脑都能测。</p>
+
+    <div class="sheet-actions">
+      <button class="ghost" id="spClose">关闭</button>
+      <button class="primary" id="spPairRun">开始互测</button>
     </div>
   </div>
 </div>

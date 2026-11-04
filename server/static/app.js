@@ -469,6 +469,11 @@
       DTOK = '';
       if (SID) LS.set(SID_KEY(SID), '');
       showAuth('已被这台电脑移出，重新输入访问码就能继续用');
+    } else if (d.event === 'speed_invite') {
+      // 对端发起互测：直接把面板打开并开始接收，省得再点一次
+      openSpeed();
+      spJoin(d.sid, 'recv', d.from_name || '对方设备');
+      toast((d.from_name || '对方') + ' 正在和你测速', 3000);
     }
   }
 
@@ -1449,6 +1454,334 @@
   }
 
   // ---------------------------------------------------------------- 设置 / 弹层
+  // ---------------------------------------------------------------- 测速
+  // 三种口径都在这里：单端（到电脑的上下行）、两端互测（A 发 B 收，走服务器转发）
+  var SP = {
+    ws: null, sid: '', role: '', name: '', t0: 0,
+    sent: 0, recv: 0, remote: 0, tick: null, busy: false, blob: null
+  };
+
+  function spRate(bytes, ms) {
+    if (!bytes || !ms) return '–';
+    var bps = bytes * 1000 / ms;
+    if (bps >= 1048576) return (bps / 1048576).toFixed(1) + ' MB/s';
+    if (bps >= 1024) return (bps / 1024).toFixed(0) + ' KB/s';
+    return bps.toFixed(0) + ' B/s';
+  }
+
+  function spSet(id, txt, cls) {
+    var el = $(id);
+    if (!el) return;
+    el.textContent = txt;
+    var cell = el.parentNode;
+    if (cell && cell.classList) {
+      cell.classList.remove('good');
+      cell.classList.remove('bad');
+      if (cls) cell.classList.add(cls);
+    }
+  }
+
+  function spTip(t) {
+    var el = $('spTip');
+    if (el) el.textContent = t;
+  }
+
+  function spPingOnce() {
+    var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+    return fetch(API + withTok('/api/speed/ping'), { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function () {
+        var t1 = (window.performance && performance.now) ? performance.now() : Date.now();
+        return t1 - t0;
+      });
+  }
+
+  function spPing(n) {
+    var ps = [], chain = Promise.resolve();
+    for (var i = 0; i < n; i++) {
+      chain = chain.then(function () {
+        return spPingOnce().then(function (v) { ps.push(v); });
+      });
+    }
+    return chain.then(function () {
+      ps.sort(function (a, b) { return a - b; });
+      return Math.round(ps[Math.floor(ps.length / 2)]);
+    });
+  }
+
+  // 下载：限时读流，算「这段时间内实际到手多少字节」。慢链路也能测出来，不会等一个 64MB 下完
+  function spDown(msTarget) {
+    var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var t0 = performance.now(), bytes = 0, stopped = false;
+    var url = API + withTok('/api/speed/down?bytes=' + (64 * 1024 * 1024));
+    var timer = setTimeout(function () { stopped = true; if (ctrl) { try { ctrl.abort(); } catch (e) {} } }, msTarget);
+    var opts = { cache: 'no-store' };
+    if (ctrl) opts.signal = ctrl.signal;
+    return fetch(url, opts).then(function (res) {
+      if (!res.body || !res.body.getReader) {
+        return res.arrayBuffer().then(function (b) { bytes = b.byteLength; });
+      }
+      var reader = res.body.getReader();
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) return;
+          bytes += (r.value && r.value.length) || 0;
+          if (!stopped) return pump();
+        });
+      }
+      return pump();
+    }).catch(function () {
+    }).then(function () {
+      clearTimeout(timer);
+      if (ctrl) { try { ctrl.abort(); } catch (e) {} }
+      return { bytes: bytes, ms: Math.max(1, performance.now() - t0) };
+    });
+  }
+
+  function spUpBlob() {
+    if (SP.blob) return SP.blob;
+    var unit = new Uint8Array(1024 * 1024);
+    for (var i = 0; i < unit.length; i += 997) unit[i] = i & 255;
+    var parts = [];
+    for (var j = 0; j < 32; j++) parts.push(new Blob([unit]));
+    SP.blob = new Blob(parts);
+    return SP.blob;
+  }
+
+  function spUp(msTarget) {
+    var t0 = performance.now(), loaded = 0;
+    return new Promise(function (resolve) {
+      var xhr = new XMLHttpRequest();
+      var cut = false;
+      var timer = setTimeout(function () {
+        cut = true;
+        try { xhr.abort(); } catch (e) {}
+      }, msTarget);
+      function fin() {
+        clearTimeout(timer);
+        resolve({ bytes: loaded, ms: Math.max(1, performance.now() - t0), cut: cut });
+      }
+      try {
+        xhr.open('POST', API + withTok('/api/speed/up'), true);
+        xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+        xhr.upload.onprogress = function (e) { if (e && e.loaded > loaded) loaded = e.loaded; };
+        xhr.onload = fin;
+        xhr.onerror = fin;
+        xhr.onabort = fin;
+        xhr.send(spUpBlob());
+      } catch (e) {
+        fin();
+      }
+    });
+  }
+
+  function spLocal() {
+    if (SP.busy) return;
+    SP.busy = true;
+    $('spLocalRun').disabled = true;
+    $('spLocalRun').textContent = '测速中…';
+    spSet('spPing', '…');
+    spSet('spDown', '…');
+    spSet('spUp', '…');
+    spTip('正在测…');
+    var pingMs = 0;
+    spPing(5).then(function (ms) {
+      pingMs = ms;
+      spSet('spPing', ms + ' ms', ms < 12 ? 'good' : (ms > 60 ? 'bad' : ''));
+      return spDown(3500);
+    }).then(function (r) {
+      spSet('spDown', spRate(r.bytes, r.ms), r.bytes * 1000 / r.ms > 1048576 ? 'good' : 'bad');
+      return spUp(3000);
+    }).then(function (r) {
+      spSet('spUp', spRate(r.bytes, r.ms), r.bytes * 1000 / r.ms > 524288 ? 'good' : 'bad');
+      var downBps = 0;
+      try { downBps = parseFloat($('spDown').textContent); } catch (e) {}
+      var slow = /KB\/s|B\/s/.test($('spDown').textContent);
+      spTip(slow
+        ? '带宽偏低：如果手机连的是 2.4GHz 或信号弱，换 5GHz、或把电脑插网线会快好几倍。'
+        : '这个速度正常，日常传文件够用。');
+    }).catch(function () {
+      spTip('测速失败，检查一下和电脑的连接。');
+    }).then(function () {
+      SP.busy = false;
+      $('spLocalRun').disabled = false;
+      $('spLocalRun').textContent = '再测一次';
+    });
+  }
+
+  function spFillTargets() {
+    var sel = $('spTarget');
+    if (!sel) return;
+    var cur = sel.value;
+    var opts = ['<option value="">选择一台在线设备</option>'];
+    (S.devices || []).forEach(function (d) {
+      if (d.is_self || d.revoked || !d.online) return;
+      opts.push('<option value="' + d.id + '">' + esc(d.name || d.id) + '</option>');
+    });
+    sel.innerHTML = opts.join('');
+    if (cur) sel.value = cur;
+    if (opts.length === 1) $('spPairRun').disabled = true;
+    else $('spPairRun').disabled = false;
+  }
+
+  function spCloseSocket() {
+    clearInterval(SP.tick);
+    SP.tick = null;
+    if (SP.ws) {
+      try {
+        SP.ws.onclose = null;
+        SP.ws.onmessage = null;
+        SP.ws.close();
+      } catch (e) {}
+      SP.ws = null;
+    }
+  }
+
+  function spJoin(sid, role, name) {
+    spCloseSocket();
+    SP.sid = sid;
+    SP.role = role;
+    SP.name = name || '';
+    SP.sent = 0;
+    SP.recv = 0;
+    SP.remote = 0;
+    SP.t0 = 0;
+    SP.busy = true;
+    $('spSendLabel').textContent = role === 'send' ? '我这台发出去' : '对方已发出';
+    $('spRecvLabel').textContent = role === 'send' ? '对端收到' : '我实际收到';
+    spSet('spSend', '…');
+    spSet('spRecv', '…');
+    $('spPairRun').disabled = true;
+    $('spPairRun').textContent = role === 'send' ? '测速中…' : '对方正在测…';
+
+    var url = API.replace(/^http/, 'ws') + '/ws/speed/' + encodeURIComponent(sid) +
+      '?device=' + encodeURIComponent(ME_ID) +
+      '&token=' + encodeURIComponent(HOST_TOK) + '&dtok=' + encodeURIComponent(DTOK);
+    var ws;
+    try { ws = new WebSocket(url); } catch (e) { toast('测速连接失败'); spBusyEnd(); return; }
+    ws.binaryType = 'arraybuffer';
+    SP.ws = ws;
+    ws.onopen = function () { spTip('已连上，等两端就绪…'); };
+    ws.onmessage = function (ev) {
+      if (typeof ev.data === 'string') {
+        var d;
+        try { d = JSON.parse(ev.data); } catch (e) { return; }
+        if (d.t === 'go') spGo();
+        else if (d.t === 'done') spFinish(d);
+        else if (d.t === 'stat') {
+          if (SP.role === 'send') SP.remote = d.down || 0;
+          else SP.remote = d.up || 0;
+        }
+        return;
+      }
+      if (SP.role === 'recv') SP.recv += (ev.data && ev.data.byteLength) || 0;
+    };
+    ws.onclose = function () {
+      if (SP.busy) spBusyEnd('连接断了');
+    };
+  }
+
+  function spBusyEnd(msg) {
+    SP.busy = false;
+    clearInterval(SP.tick);
+    SP.tick = null;
+    $('spPairRun').disabled = false;
+    $('spPairRun').textContent = '开始互测';
+    if (msg) spTip(msg);
+  }
+
+  function spGo() {
+    SP.t0 = performance.now();
+    SP.sent = 0;
+    SP.recv = 0;
+    spTip(SP.role === 'send' ? '正在发送数据…' : '正在接收数据…');
+    clearInterval(SP.tick);
+    SP.tick = setInterval(function () {
+      var ms = Math.max(1, performance.now() - SP.t0);
+      if (SP.role === 'send') {
+        spSet('spSend', spRate(SP.sent, ms));
+        spSet('spRecv', spRate(SP.remote, ms));
+        if (SP.ws && SP.ws.readyState === 1) {
+          try { SP.ws.send(JSON.stringify({ t: 'stat' })); } catch (e) {}
+        }
+      } else {
+        spSet('spSend', spRate(SP.remote, ms));
+        spSet('spRecv', spRate(SP.recv, ms));
+        if (SP.ws && SP.ws.readyState === 1) {
+          try { SP.ws.send(JSON.stringify({ t: 'stat' })); } catch (e) {}
+        }
+      }
+    }, 300);
+    if (SP.role === 'send') spSendLoop();
+  }
+
+  function spSendLoop() {
+    var CHUNK = 256 * 1024;
+    var buf = new Uint8Array(CHUNK);
+    for (var i = 0; i < CHUNK; i += 1021) buf[i] = i & 255;
+    var deadline = performance.now() + 5000;
+    function step() {
+      var ws = SP.ws;
+      if (!ws || ws.readyState !== 1) return;
+      if (performance.now() > deadline) {
+        try { ws.send(JSON.stringify({ t: 'done' })); } catch (e) {}
+        return;
+      }
+      // 缓冲里堆太多说明这一跳已经发不动了，先等一等；
+      // 一口气全塞进浏览器内存会得到一个好看但假的数字
+      if (ws.bufferedAmount > 2 * 1024 * 1024) { setTimeout(step, 6); return; }
+      try { ws.send(buf); } catch (e) { return; }
+      SP.sent += CHUNK;
+      setTimeout(step, 0);
+    }
+    step();
+  }
+
+  function spFinish(d) {
+    var ms = Math.max(1, performance.now() - SP.t0);
+    var up = (d && d.up) || SP.sent;
+    var down = (d && d.down) || SP.recv;
+    clearInterval(SP.tick);
+    SP.tick = null;
+    SP.busy = false;
+    $('spPairRun').disabled = false;
+    $('spPairRun').textContent = '再测一次';
+    if (SP.role === 'send') {
+      spSet('spSend', spRate(up, ms), 'good');
+      spSet('spRecv', spRate(down, ms), 'good');
+      spTip('我发出去 ' + spRate(up, ms) + '，对端实际收到 ' + spRate(down, ms) +
+        '。中间要过电脑转一次，端到端以「对端收到」为准。');
+    } else {
+      spSet('spSend', spRate(up, ms));
+      spSet('spRecv', spRate(down, ms), 'good');
+      spTip('端到端 ' + spRate(down, ms) + '（我实际收到的）。这就是两台设备之间传文件的真实速度。');
+    }
+    spCloseSocket();
+  }
+
+  function spStartPair() {
+    var target = $('spTarget').value;
+    if (!target) { toast('先选一台在线设备'); return; }
+    if (SP.busy) { toast('正在测，等一下'); return; }
+    var name = '';
+    (S.devices || []).forEach(function (x) { if (x.id === target) name = x.name; });
+    api('/api/speed/relay/start', {
+      method: 'POST',
+      body: JSON.stringify({ device: ME_ID, target: target })
+    }).then(function (d) {
+      spJoin(d.sid, 'send', name);
+      spTip('已通知 ' + (name || '对方') + '，等它连上就自动开始…');
+    }).catch(function (e) {
+      toast('发起失败：' + (e && e.message ? e.message : '未知错误'));
+    });
+  }
+
+  function openSpeed() {
+    $('speed').classList.add('show');
+    spFillTargets();
+    loadDevices(true).then(spFillTargets).catch(function () {});
+  }
+
   function openSettings() {
     $('setName').value = S.me ? S.me.name : '';
     $('setServer').value = LS.get('nd_server', '') || API;
@@ -1572,6 +1905,21 @@
     };
 
     $('btnSettings').onclick = openSettings;
+    $('btnSpeed').onclick = openSpeed;
+    $('spLocalRun').onclick = spLocal;
+    $('spPairRun').onclick = spStartPair;
+    $('spClose').onclick = function () {
+      $('speed').classList.remove('show');
+      spCloseSocket();
+      spBusyEnd();
+    };
+    $('speed').addEventListener('click', function (e) {
+      if (e.target === $('speed')) {
+        $('speed').classList.remove('show');
+        spCloseSocket();
+        spBusyEnd();
+      }
+    });
     $('btnInvite').onclick = openInvite;
     $('btnDevices').onclick = openDevices;
     $('btnChatMenu').onclick = openChatMenu;

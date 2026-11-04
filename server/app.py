@@ -19,14 +19,14 @@ import threading
 from typing import Optional, List
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Request, Query
-from fastapi.responses import FileResponse, JSONResponse, Response, HTMLResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from .store import Store
 
 APP_NAME = "NearDrop 近传"
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 DISCOVERY_PORT = 37021
 DEFAULT_PORT = 8787
 
@@ -249,6 +249,10 @@ class Hub:
 
     async def broadcast_event(self, payload: dict):
         await self._fanout(None, payload)
+
+    async def send_to(self, device_id: str, payload: dict):
+        """只发给某一台设备（测速邀请用，别打扰别人）。"""
+        await self._fanout({device_id}, payload)
 
     async def kick(self, device_id: str, reason: str = "revoked"):
         """把某台设备的连接全部断掉（踢出后立即生效，不用等它自己重连）。"""
@@ -653,6 +657,176 @@ def api_qr(request: Request, text: str = ""):
 def api_health():
     return {"ok": True, "app": APP_NAME, "version": VERSION,
             "server_id": server_id() if store else ""}
+
+
+# ---------------------------------------------------------------- 测速
+# 三种口径：
+#   1) 单端：ping / 下载 / 上传，测的是「这台设备 ↔ 这台电脑」
+#   2) 中继互测：A 发、B 收，服务器只转发不落盘，测的是手机之间的真实端到端速度
+#   3) 因为电脑是中转站，A→B 的链路一定是 A→电脑→B 两跳，两段会互相争用同一信道
+SPEED_CAP = 512 * 1024 * 1024
+_SPEED_BLOCK = os.urandom(1024 * 1024)
+
+
+@app.get("/api/speed/ping")
+async def api_speed_ping():
+    return {"ts": int(time.time() * 1000)}
+
+
+@app.get("/api/speed/down")
+async def api_speed_down(n_bytes: int = Query(8 * 1024 * 1024, alias="bytes")):
+    total = max(64 * 1024, min(int(n_bytes), SPEED_CAP))
+
+    async def gen():
+        left = total
+        while left > 0:
+            take = min(len(_SPEED_BLOCK), left)
+            yield _SPEED_BLOCK[:take]
+            left -= take
+
+    return StreamingResponse(gen(), media_type="application/octet-stream", headers={
+        "Cache-Control": "no-store",
+        "Content-Length": str(total),
+        "X-Accel-Buffering": "no",
+    })
+
+
+@app.post("/api/speed/up")
+async def api_speed_up(request: Request):
+    n = 0
+    t0 = time.perf_counter()
+    async for chunk in request.stream():
+        n += len(chunk)
+        if n >= SPEED_CAP:
+            break
+    return {"bytes": n, "ms": max(1, int((time.perf_counter() - t0) * 1000))}
+
+
+class RelaySession:
+    """两端互测的转发会话：A 发进来的字节直接转给 B，全程不落盘。"""
+
+    def __init__(self, sid: str, a: str, b: str):
+        self.sid = sid
+        self.a = a
+        self.b = b
+        self.wa: Optional[WebSocket] = None
+        self.wb: Optional[WebSocket] = None
+        self.up = 0          # 服务器从 A 收到
+        self.down = 0        # 服务器发给 B 成功
+        self.created = time.time()
+        self.finished = False
+
+
+_RELAY: dict = {}
+RELAY_TTL = 180
+
+
+def _sweep_relay():
+    now = time.time()
+    for k in [k for k, v in _RELAY.items() if now - v.created > RELAY_TTL]:
+        _RELAY.pop(k, None)
+
+
+@app.post("/api/speed/relay/start")
+async def api_speed_relay_start(payload: dict):
+    me = (payload.get("device") or "").strip()
+    target = (payload.get("target") or "").strip()
+    if not me or not target or me == target:
+        raise HTTPException(400, "参数不对")
+    _sweep_relay()
+    sid = secrets.token_urlsafe(9)
+    _RELAY[sid] = RelaySession(sid, me, target)
+    # 通知对端：那边会自动打开测速面板并开始接收
+    try:
+        name = (store.get_device(me) or {}).get("name") or me
+    except Exception:
+        name = me
+    await hub.send_to(target, {"event": "speed_invite", "sid": sid, "from": me, "from_name": name})
+    return {"sid": sid, "target": target}
+
+
+@app.websocket("/ws/speed/{sid}")
+async def ws_speed(ws: WebSocket, sid: str, device: str = Query(""), token: str = Query(""),
+                   dtok: str = Query("")):
+    ip = ws.client.host if ws.client else None
+    local = ip in ("127.0.0.1", "::1")
+    s = _RELAY.get(sid)
+    if store is None or not s or s.finished:
+        await ws.accept()
+        await ws.close(code=4004)
+        return
+    if not (local or token == ensure_secrets()["token"] or store.check_devtok(device, dtok)):
+        await ws.accept()
+        await ws.close(code=4003)
+        return
+    if device not in (s.a, s.b):
+        await ws.accept()
+        await ws.close(code=4003)
+        return
+
+    await ws.accept()
+    sender = (device == s.a)
+    if sender:
+        s.wa = ws
+    else:
+        s.wb = ws
+    # 两端都连上才喊开始，避免一方已经发了半秒、另一方还没开始计时
+    if s.wa is not None and s.wb is not None:
+        for w in (s.wa, s.wb):
+            try:
+                await w.send_json({"t": "go", "ts": int(time.time() * 1000)})
+            except Exception:
+                pass
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            data = msg.get("bytes")
+            if data:
+                s.up += len(data)
+                if s.wb is not None:
+                    try:
+                        await s.wb.send_bytes(data)
+                        s.down += len(data)
+                    except Exception:
+                        s.wb = None
+                continue
+            txt = msg.get("text")
+            if not txt:
+                continue
+            try:
+                d = json.loads(txt)
+            except json.JSONDecodeError:
+                continue
+            t = d.get("t")
+            if t == "stat":
+                # 发送端可能想看一眼对端到底收了多少
+                try:
+                    await ws.send_json({"t": "stat", "up": s.up, "down": s.down})
+                except Exception:
+                    pass
+            elif t == "done":
+                s.finished = True
+                for w in (s.wa, s.wb):
+                    if w is None:
+                        continue
+                    try:
+                        await w.send_json({"t": "done", "up": s.up, "down": s.down})
+                    except Exception:
+                        pass
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        log.debug("speed ws error: %s", e)
+    finally:
+        if sender:
+            s.wa = None
+        else:
+            s.wb = None
+        if s.wa is None and s.wb is None:
+            _RELAY.pop(sid, None)
 
 
 def _q(s: str) -> str:

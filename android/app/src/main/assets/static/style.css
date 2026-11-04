@@ -707,3 +707,33 @@ input, textarea { font: inherit; color: inherit; }
 /* 长按选中文字的高亮，跟气泡底色区分开 */
 .bubble ::selection { background: rgba(37, 99, 235, .28); }
 .bubble ::-moz-selection { background: rgba(37, 99, 235, .28); }
+
+/* ---------- 测速面板 ---------- */
+.sp-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 8px; margin: 14px 0 10px;
+}
+.sp-grid.sp-pair { grid-template-columns: repeat(2, 1fr); }
+.sp-cell {
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 12px; padding: 12px 8px; text-align: center;
+}
+.sp-cell b {
+  display: block; font-size: 17px; font-weight: 600;
+  font-variant-numeric: tabular-nums; letter-spacing: -.2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sp-cell em {
+  display: block; margin-top: 4px; font-style: normal;
+  font-size: 11px; color: var(--text-2);
+}
+.sp-cell.good b { color: #16a34a; }
+.sp-cell.bad b { color: #dc2626; }
+button.wide { width: 100%; padding: 11px; }
+.sp-sep {
+  display: flex; align-items: center; gap: 10px;
+  margin: 20px 0 6px; color: var(--text-2); font-size: 12px;
+}
+.sp-sep::before, .sp-sep::after {
+  content: ''; flex: 1; height: 1px; background: var(--line);
+}

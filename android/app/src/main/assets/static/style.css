@@ -234,6 +234,7 @@ input, textarea { font: inherit; color: inherit; }
   word-break: break-word;
   white-space: pre-wrap;
   position: relative;
+  -webkit-touch-callout: none;
   box-shadow: 0 1px 1px rgba(0, 0, 0, .05);
 }
 .row.out .bubble { background: var(--bubble-out); color: var(--bubble-out-text); }
@@ -556,3 +557,138 @@ input, textarea { font: inherit; color: inherit; }
   margin-top: 6px; padding: 9px 22px; border: 0; border-radius: 10px;
   background: var(--brand); color: #fff; font-size: 13px;
 }
+
+/* ---------- 视频卡片（聊天里只放封面 + 播放按钮） ---------- */
+.vcard {
+  position: relative;
+  width: min(64vw, 320px);
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #101216 center/cover no-repeat;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.vcard.has-poster { background-color: #000; }
+.vcard .vplay {
+  width: 54px; height: 54px; border-radius: 50%;
+  background: rgba(0, 0, 0, .45);
+  border: 2px solid rgba(255, 255, 255, .85);
+  color: #fff; font-size: 20px; line-height: 50px; text-align: center;
+  padding-left: 4px;
+  backdrop-filter: blur(2px);
+  transition: transform .15s ease, opacity .15s ease;
+}
+.vcard:active .vplay { transform: scale(.92); opacity: .8; }
+.vcard .vdur {
+  position: absolute; right: 8px; bottom: 8px;
+  padding: 2px 6px; border-radius: 6px;
+  background: rgba(0, 0, 0, .6); color: #fff;
+  font-size: 11px; letter-spacing: .3px;
+}
+.vcard .vsize {
+  position: absolute; left: 8px; bottom: 8px;
+  padding: 2px 6px; border-radius: 6px;
+  background: rgba(0, 0, 0, .45); color: rgba(255, 255, 255, .9);
+  font-size: 11px;
+}
+
+/* ---------- 全屏播放器 ---------- */
+.player {
+  position: fixed; inset: 0; z-index: 80;
+  background: #000;
+  display: none;
+  align-items: center; justify-content: center;
+  overscroll-behavior: none;
+}
+.player.show { display: flex; }
+.player video {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.player .pl-top,
+.player .pl-bottom {
+  position: absolute; left: 0; right: 0;
+  display: flex; align-items: center; gap: 12px;
+  transition: opacity .2s ease;
+}
+.player .pl-top {
+  top: 0; padding: 10px 14px;
+  padding-top: calc(10px + env(safe-area-inset-top));
+  background: linear-gradient(180deg, rgba(0, 0, 0, .62), rgba(0, 0, 0, 0));
+}
+.player .pl-bottom {
+  bottom: 0; padding: 14px;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom));
+  flex-direction: column; align-items: stretch; gap: 6px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, .68), rgba(0, 0, 0, 0));
+}
+.player.hide-ui .pl-top,
+.player.hide-ui .pl-bottom,
+.player.hide-ui .pl-big { opacity: 0; pointer-events: none; }
+.player .pl-title {
+  flex: 1; color: #fff; font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pl-ico {
+  width: 40px; height: 40px; flex: none;
+  border-radius: 50%; border: 0;
+  background: rgba(255, 255, 255, .16);
+  color: #fff; font-size: 16px; line-height: 40px;
+}
+.pl-ico:active { background: rgba(255, 255, 255, .3); }
+.pl-big {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 74px; height: 74px;
+  border-radius: 50%; border: 0;
+  background: rgba(0, 0, 0, .45);
+  color: #fff; font-size: 26px; padding-left: 5px;
+  transition: opacity .2s ease;
+}
+.pl-big.hidden { display: none; }
+.player .pl-bar { display: flex; align-items: center; gap: 10px; color: #fff; font-size: 11px; }
+.player .pl-bar span { flex: none; min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
+.player .pl-bar input[type=range] {
+  flex: 1; -webkit-appearance: none; appearance: none;
+  height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .35);
+}
+.player .pl-bar input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px;
+  border-radius: 50%; background: #fff;
+}
+.player .pl-btns { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* ---------- 长按消息菜单 ---------- */
+.msg-menu {
+  position: fixed; z-index: 90;
+  display: none;
+  background: #2b2b2b;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .35);
+  overflow: hidden;
+  transform: translateX(-50%);
+}
+.msg-menu.show { display: flex; }
+.msg-menu button {
+  padding: 11px 20px; border: 0; background: none;
+  color: #fff; font-size: 14px; white-space: nowrap;
+}
+.msg-menu button:active { background: rgba(255, 255, 255, .12); }
+.msg-menu button.danger { color: #ff6b6b; }
+.msg-menu .sep { width: 1px; background: rgba(255, 255, 255, .15); }
+.msg-menu::after {
+  content: ''; position: absolute; left: 50%; bottom: -6px;
+  width: 12px; height: 12px; margin-left: -6px;
+  background: #2b2b2b; transform: rotate(45deg);
+}
+.msg-menu.below::after { bottom: auto; top: -6px; }
+
+/* 长按选中文字的高亮，跟气泡底色区分开 */
+.bubble ::selection { background: rgba(37, 99, 235, .28); }
+.bubble ::-moz-selection { background: rgba(37, 99, 235, .28); }

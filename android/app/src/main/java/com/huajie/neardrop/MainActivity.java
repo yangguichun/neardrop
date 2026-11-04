@@ -3,11 +3,13 @@ package com.huajie.neardrop;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.media.MediaRecorder;
@@ -241,12 +243,15 @@ public class MainActivity extends Activity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
+            // 先让页面自己处理：全屏播放器、长按菜单、图片预览都是页面内的浮层
             web.evaluateJavascript(
-                    "(function(){if(document.body.classList.contains('chat-open')){" +
+                    "(function(){" +
+                            "if(window.__ndBack&&window.__ndBack()==='1')return '2';" +
+                            "if(document.body.classList.contains('chat-open')){" +
                             "document.body.classList.remove('chat-open');return '1';}" +
                             "return '0';})()",
                     value -> {
-                        if (value == null || !value.contains("1")) {
+                        if (value == null || (!value.contains("1") && !value.contains("2"))) {
                             if (server == null || server.isEmpty()) {
                                 finish();
                             } else {
@@ -406,6 +411,42 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void jsReady() {
             jsHooked = true;
+        }
+
+        /** 复制到剪贴板：WebView 从 http:// 加载，navigator.clipboard 在部分机型上不可用，走原生最稳 */
+        @JavascriptInterface
+        public void copyText(final String text) {
+            if (text == null) return;
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                        if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("neardrop", text));
+                    } catch (Exception ignored) {
+                    }
+                }
+            });
+        }
+
+        /** 全屏播放器旋转：landscape / portrait / auto */
+        @JavascriptInterface
+        public void setOrientation(final String mode) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        if ("landscape".equals(mode)) {
+                            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+                        } else if ("portrait".equals(mode)) {
+                            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+                        } else {
+                            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+            });
         }
 
         /**

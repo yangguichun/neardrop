@@ -665,6 +665,7 @@
 
     if (m.type === 'text') {
       bubble.textContent = m.text || '';
+      bindLongPress(bubble, m);
     } else if (m.type === 'image') {
       bubble.classList.add('media');
       var img = document.createElement('img');
@@ -676,12 +677,7 @@
       bubble.appendChild(img);
     } else if (m.type === 'video') {
       bubble.classList.add('media');
-      var vid = document.createElement('video');
-      vid.src = fileUrl(m.file_id);
-      vid.controls = true;
-      vid.playsInline = true;
-      vid.preload = 'metadata';
-      bubble.appendChild(vid);
+      bubble.appendChild(buildVideoCard(m));
     } else if (m.type === 'audio') {
       bubble.appendChild(buildVoice(m));
     } else {
@@ -744,6 +740,255 @@
       '<div class="file-size">' + fmtSize(m.file_size) + '</div></div>';
     wrap.onclick = function () { saveMsg(m); };
     return wrap;
+  }
+
+  // ---------------------------------------------------------------- 视频卡片 / 播放器
+  // 聊天里只放一张封面 + 播放按钮，点开才是全屏播放器（参考微信的做法）。
+  var posterCache = {};    // file_id -> {url, dur}
+  var posterQueue = [];
+  var posterBusy = false;
+
+  function buildVideoCard(m) {
+    var card = document.createElement('div');
+    card.className = 'vcard';
+    card.innerHTML = '<div class="vplay">▶</div>' +
+      '<span class="vsize">' + fmtSize(m.file_size) + '</span>' +
+      '<span class="vdur" style="display:none"></span>';
+    var durEl = card.querySelector('.vdur');
+    card.onclick = function () { openPlayer(m); };
+
+    var cached = posterCache[m.file_id];
+    if (cached) applyPoster(card, durEl, cached);
+    else enqueuePoster(m, function (info) { applyPoster(card, durEl, info); });
+    return card;
+  }
+
+  function applyPoster(card, durEl, info) {
+    if (!card.isConnected) return;
+    if (info.url) {
+      card.style.backgroundImage = 'url(' + info.url + ')';
+      card.classList.add('has-poster');
+    }
+    if (info.dur > 0) {
+      durEl.textContent = fmtDur(info.dur);
+      durEl.style.display = '';
+    }
+  }
+
+  // 逐个取帧，避免一屏视频同时发请求把 Wi-Fi 挤满
+  function enqueuePoster(m, cb) {
+    posterQueue.push({ m: m, cb: cb });
+    pumpPoster();
+  }
+
+  function pumpPoster() {
+    if (posterBusy || !posterQueue.length) return;
+    posterBusy = true;
+    var job = posterQueue.shift();
+    grabPoster(job.m, function (info) {
+      posterBusy = false;
+      posterCache[job.m.file_id] = info;
+      job.cb(info);
+      pumpPoster();
+    });
+  }
+
+  function grabPoster(m, done) {
+    var v = document.createElement('video');
+    var finished = false;
+    var timer = setTimeout(function () { finish({ url: '', dur: 0 }); }, 6000);
+
+    function finish(info) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      try { v.removeAttribute('src'); v.load(); } catch (e) {}
+      done(info || { url: '', dur: 0 });
+    }
+
+    try {
+      v.preload = 'metadata';
+      v.muted = true;
+      v.playsInline = true;
+      // App 里页面来自 appassets.local，文件来自 http://ip:port，属于跨域。
+      // 不带这句 canvas 会被污染，toDataURL 直接抛 SecurityError。
+      v.crossOrigin = 'anonymous';
+      v.addEventListener('loadedmetadata', function () {
+        var dur = isFinite(v.duration) ? v.duration : 0;
+        v._dur = dur;
+        try { v.currentTime = dur > 2 ? Math.min(1, dur * 0.1) : 0; }
+        catch (e) { finish({ url: '', dur: dur }); }
+      });
+      v.addEventListener('seeked', function () {
+        var dur = v._dur || 0;
+        try {
+          var w = 320;
+          var h = Math.round(w * (v.videoHeight / Math.max(1, v.videoWidth))) || 180;
+          var c = document.createElement('canvas');
+          c.width = w; c.height = h;
+          c.getContext('2d').drawImage(v, 0, 0, w, h);
+          finish({ url: c.toDataURL('image/jpeg', 0.72), dur: dur });
+        } catch (e) { finish({ url: '', dur: dur }); }
+      });
+      v.addEventListener('error', function () { finish({ url: '', dur: 0 }); });
+      v.src = fileUrl(m.file_id);
+      v.load();
+    } catch (e) { finish({ url: '', dur: 0 }); }
+  }
+
+  var playerCur = null;
+  var plLandscape = false;
+  var plHideTimer = null;
+
+  function openPlayer(m) {
+    playerCur = m;
+    var v = $('playerVideo');
+    $('plTitle').textContent = m.file_name || '视频';
+    $('plBig').classList.remove('hidden');
+    $('plPlay').textContent = '❚❚';
+    $('plSeek').value = '0';
+    $('plTime').textContent = '00:00';
+    $('plTotal').textContent = '00:00';
+    v.src = fileUrl(m.file_id);
+    $('player').classList.add('show');
+    try { v.play().catch(function () {}); } catch (e) {}
+    showPlayerUi();
+  }
+
+  function closePlayer() {
+    var v = $('playerVideo');
+    $('player').classList.remove('show');
+    $('player').classList.remove('hide-ui');
+    try { v.pause(); } catch (e) {}
+    try { v.removeAttribute('src'); v.load(); } catch (e) {}
+    plLandscape = false;
+    try {
+      if (window.NearDrop && window.NearDrop.setOrientation) window.NearDrop.setOrientation('auto');
+    } catch (e) {}
+    playerCur = null;
+    clearTimeout(plHideTimer);
+  }
+
+  function togglePlay() {
+    var v = $('playerVideo');
+    if (v.paused) { try { v.play().catch(function () {}); } catch (e) {} }
+    else v.pause();
+    showPlayerUi();
+  }
+
+  function showPlayerUi() {
+    $('player').classList.remove('hide-ui');
+    clearTimeout(plHideTimer);
+    plHideTimer = setTimeout(function () {
+      var v = $('playerVideo');
+      if (v && !v.paused) $('player').classList.add('hide-ui');
+    }, 3200);
+  }
+
+  function toggleRotate() {
+    if (!(window.NearDrop && window.NearDrop.setOrientation)) { toast('这里不支持旋转'); return; }
+    plLandscape = !plLandscape;
+    try { window.NearDrop.setOrientation(plLandscape ? 'landscape' : 'portrait'); } catch (e) {}
+    showPlayerUi();
+  }
+
+  // ---------------------------------------------------------------- 长按文字消息
+  var menuMsg = null;
+
+  function bindLongPress(bubble, m) {
+    var timer = null, sx = 0, sy = 0;
+
+    function cancel() { clearTimeout(timer); }
+    function fire() {
+      cancel();
+      selectBubbleText(bubble);
+      openMsgMenu(m, bubble);
+      try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) {}
+    }
+
+    bubble.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) return;
+      sx = e.touches[0].clientX;
+      sy = e.touches[0].clientY;
+      cancel();
+      timer = setTimeout(fire, 420);
+    }, { passive: true });
+    bubble.addEventListener('touchmove', function (e) {
+      var t = e.touches[0];
+      if (Math.abs(t.clientX - sx) > 10 || Math.abs(t.clientY - sy) > 10) cancel();
+    }, { passive: true });
+    bubble.addEventListener('touchend', cancel);
+    bubble.addEventListener('touchcancel', cancel);
+
+    // 电脑上右键、或按住不动，效果一样
+    bubble.addEventListener('contextmenu', function (e) { e.preventDefault(); fire(); });
+    bubble.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      sx = e.clientX; sy = e.clientY;
+      cancel();
+      timer = setTimeout(fire, 500);
+    });
+    bubble.addEventListener('mouseup', cancel);
+    bubble.addEventListener('mouseleave', cancel);
+  }
+
+  function selectBubbleText(el) {
+    try {
+      var range = document.createRange();
+      range.selectNodeContents(el);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (e) {}
+  }
+
+  function openMsgMenu(m, anchor) {
+    menuMsg = m;
+    var menu = $('msgMenu');
+    menu.classList.add('show');
+    var r = anchor.getBoundingClientRect();
+    var mw = menu.offsetWidth || 160;
+    var mh = menu.offsetHeight || 42;
+    var cx = r.left + r.width / 2;
+    cx = Math.max(mw / 2 + 8, Math.min(window.innerWidth - mw / 2 - 8, cx));
+    var top = r.top - mh - 12;
+    var below = top < 8;
+    if (below) top = r.bottom + 12;
+    menu.classList.toggle('below', below);
+    menu.style.left = cx + 'px';
+    menu.style.top = top + 'px';
+  }
+
+  function closeMsgMenu() {
+    $('msgMenu').classList.remove('show');
+    menuMsg = null;
+    try { window.getSelection().removeAllRanges(); } catch (e) {}
+  }
+
+  function copyText(txt) {
+    if (window.NearDrop && window.NearDrop.copyText) {
+      try { window.NearDrop.copyText(txt); toast('已复制'); return; } catch (e) {}
+    }
+    var ok = false;
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = txt;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ok = document.execCommand('copy');
+      ta.remove();
+    } catch (e) { ok = false; }
+    if (ok) { toast('已复制'); return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt)
+        .then(function () { toast('已复制'); })
+        .catch(function () { toast('复制失败'); });
+    } else {
+      toast('复制失败');
+    }
   }
 
   function removeMsg(id) {
@@ -883,11 +1128,13 @@
     toast('已开始下载');
   }
 
-  // 预览窗口里正在播的视频，保存时先暂停，避免和下载抢带宽
+  // 预览/播放器里正在播的视频，保存时先暂停，避免和下载抢带宽
   function pauseViewerVideo() {
     try {
-      var v = document.querySelector('#viewerBody video');
-      if (v && !v.paused) v.pause();
+      var vs = document.querySelectorAll('#player video, #viewerBody video');
+      for (var i = 0; i < vs.length; i++) {
+        if (!vs[i].paused) vs[i].pause();
+      }
     } catch (e) {}
   }
 
@@ -902,6 +1149,14 @@
   if (isApp && window.NearDrop && window.NearDrop.jsReady) {
     try { window.NearDrop.jsReady(); } catch (e) {}
   }
+
+  // 安卓返回键：依次关掉播放器、长按菜单、图片预览，都关完了才让原生处理
+  window.__ndBack = function () {
+    if ($('player').classList.contains('show')) { closePlayer(); return '1'; }
+    if ($('msgMenu').classList.contains('show')) { closeMsgMenu(); return '1'; }
+    if ($('viewer').classList.contains('show')) { closeViewer(); return '1'; }
+    return '0';
+  };
 
   // ---------------------------------------------------------------- 预览
   var viewerCur = null;
@@ -1316,6 +1571,70 @@
     $('viewer').addEventListener('click', function (e) {
       if (e.target === $('viewer')) closeViewer();
     });
+
+    // 全屏播放器
+    var pv = $('playerVideo');
+    $('plClose').onclick = closePlayer;
+    $('plBig').onclick = togglePlay;
+    $('plPlay').onclick = togglePlay;
+    $('plRotate').onclick = toggleRotate;
+    $('plSave').onclick = function () { if (playerCur) saveMsg(playerCur); };
+    if (!(window.NearDrop && window.NearDrop.setOrientation)) {
+      $('plRotate').style.display = 'none';
+    }
+    pv.addEventListener('click', function () {
+      if ($('player').classList.contains('hide-ui')) showPlayerUi();
+      else $('player').classList.toggle('hide-ui');
+    });
+    pv.addEventListener('loadedmetadata', function () {
+      $('plTotal').textContent = fmtDur(isFinite(pv.duration) ? pv.duration : 0);
+    });
+    pv.addEventListener('timeupdate', function () {
+      var d = pv.duration || 0;
+      $('plTime').textContent = fmtDur(pv.currentTime || 0);
+      if (d > 0) $('plSeek').value = String(Math.round(pv.currentTime / d * 1000));
+    });
+    pv.addEventListener('play', function () {
+      $('plBig').classList.add('hidden');
+      $('plPlay').textContent = '❚❚';
+      showPlayerUi();
+    });
+    pv.addEventListener('pause', function () {
+      $('plBig').classList.remove('hidden');
+      $('plPlay').textContent = '▶';
+      $('player').classList.remove('hide-ui');
+      clearTimeout(plHideTimer);
+    });
+    pv.addEventListener('error', function () {
+      if ($('player').classList.contains('show')) toast('视频打不开，可能已被删除');
+    });
+    $('plSeek').addEventListener('input', function () {
+      var d = pv.duration || 0;
+      if (d > 0) pv.currentTime = d * (Number(this.value) / 1000);
+      showPlayerUi();
+    });
+
+    // 长按消息菜单
+    $('msgMenu').addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('button[data-mact]') : null;
+      if (!b || !menuMsg) return;
+      var act = b.getAttribute('data-mact');
+      var m = menuMsg;
+      closeMsgMenu();
+      if (act === 'copy') {
+        copyText(m.text || '');
+      } else if (act === 'delete') {
+        if (!confirm('删除这条消息？')) return;
+        api('/api/message/' + m.id, { method: 'DELETE' })
+          .then(function () { removeMsg(m.id); toast('已删除'); })
+          .catch(function () { toast('删除失败'); });
+      }
+    });
+    document.addEventListener('pointerdown', function (e) {
+      if (!$('msgMenu').classList.contains('show')) return;
+      if (e.target.closest && e.target.closest('#msgMenu')) return;
+      closeMsgMenu();
+    }, true);
     $('settings').addEventListener('click', function (e) {
       if (e.target === $('settings')) $('settings').classList.remove('show');
     });

@@ -76,6 +76,38 @@
   </div>
 </div>
 
+<!-- 全屏播放器 -->
+<div class="player" id="player">
+  <video id="playerVideo" playsinline webkit-playsinline preload="auto"></video>
+
+  <div class="pl-top">
+    <button class="pl-ico" id="plClose" aria-label="关闭">✕</button>
+    <div class="pl-title" id="plTitle"></div>
+    <button class="pl-ico" id="plRotate" aria-label="旋转">⤢</button>
+  </div>
+
+  <button class="pl-big" id="plBig" aria-label="播放">▶</button>
+
+  <div class="pl-bottom">
+    <div class="pl-bar">
+      <span id="plTime">00:00</span>
+      <input type="range" id="plSeek" min="0" max="1000" value="0" step="1" />
+      <span id="plTotal">00:00</span>
+    </div>
+    <div class="pl-btns">
+      <button class="pl-ico" id="plPlay" aria-label="播放/暂停">❚❚</button>
+      <button class="pl-ico" id="plSave" aria-label="下载">⬇</button>
+    </div>
+  </div>
+</div>
+
+<!-- 长按消息菜单 -->
+<div class="msg-menu" id="msgMenu">
+  <button data-mact="copy">复制</button>
+  <span class="sep"></span>
+  <button data-mact="delete" class="danger">删除</button>
+</div>
+
 <!-- 访问口令 -->
 <div class="modal auth-modal" id="authLayer">
   <div class="sheet">

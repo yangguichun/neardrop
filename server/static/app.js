@@ -118,12 +118,42 @@
     return name ? name.slice(0, 1).toUpperCase() : '?';
   }
 
-  function toast(msg, ms) {
+  // act 可选：{ label: '打开', fn: function(){} }，给提示条挂一个操作按钮
+  function toast(msg, ms, act) {
     var t = $('toast');
-    t.textContent = msg;
+    t.innerHTML = '';
+    var txt = document.createElement('span');
+    txt.className = 'toast-txt';
+    txt.textContent = msg;
+    t.appendChild(txt);
+    if (act && act.label) {
+      var b = document.createElement('button');
+      b.className = 'toast-act';
+      b.textContent = act.label;
+      b.addEventListener('click', function () {
+        t.classList.remove('show');
+        try { act.fn(); } catch (e) {}
+      });
+      t.appendChild(b);
+      t.classList.add('has-act');
+    } else {
+      t.classList.remove('has-act');
+    }
     t.classList.add('show');
     clearTimeout(t._t);
     t._t = setTimeout(function () { t.classList.remove('show'); }, ms || 1800);
+  }
+
+  // ---------------------------------------------------------- 打开保存目录（仅 App）
+  function canOpenFolder() {
+    return !!(isApp && window.NearDrop && window.NearDrop.openFolder);
+  }
+
+  // which: last（刚存的）/ download（下载›近传）/ camera（相册›相机）
+  function openFolder(which) {
+    if (!canOpenFolder()) return false;
+    try { window.NearDrop.openFolder(which || 'last'); } catch (e) { toast('打不开文件管理器'); }
+    return true;
   }
 
   function api(path, opts) {
@@ -1143,7 +1173,14 @@
     if (state === 'start') { saving = true; toast('正在保存…', 60000); return; }
     if (state === 'progress') { toast('正在保存 ' + msg, 60000); return; }
     saving = false;
-    if (state === 'done') { toast(msg || '已保存', 3000); return; }
+    if (state === 'done') {
+      var which = /相册/.test(msg || '') ? 'camera' : 'download';
+      toast(msg || '已保存', 6000, canOpenFolder() ? {
+        label: '打开',
+        fn: function () { openFolder(which); }
+      } : null);
+      return;
+    }
     toast(msg || '保存失败', 3000);
   };
   if (isApp && window.NearDrop && window.NearDrop.jsReady) {
@@ -1416,6 +1453,7 @@
     $('setName').value = S.me ? S.me.name : '';
     $('setServer').value = LS.get('nd_server', '') || API;
     $('setCode').textContent = S.accessCode || '------';
+    $('setFolderField').style.display = canOpenFolder() ? '' : 'none';
     $('settings').classList.add('show');
   }
 
@@ -1539,6 +1577,8 @@
     $('btnChatMenu').onclick = openChatMenu;
     $('setCancel').onclick = function () { $('settings').classList.remove('show'); };
     $('setSave').onclick = saveSettings;
+    $('setOpenDl').onclick = function () { openFolder('download'); };
+    $('setOpenCam').onclick = function () { openFolder('camera'); };
     $('inviteClose').onclick = function () { $('invite').classList.remove('show'); };
 
     $('devClose').onclick = function () { $('devices').classList.remove('show'); };

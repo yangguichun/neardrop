@@ -19,6 +19,7 @@ import android.webkit.WebResourceResponse;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.util.Base64;
@@ -86,6 +87,8 @@ public class MainActivity extends Activity {
     // 保存任务的进度/结果要靠原生回传前端，前端挂上钩子后才用它，否则退回 Toast
     private volatile boolean jsHooked = false;
     private volatile boolean saving = false;
+    // 最近一次保存落在哪个目录（相对外部存储），「打开」按钮用它定位；同时写进 SP，重启也还在
+    private volatile String lastSaveFolder = "";
 
     // ------------------------------------------------------------------ 生命周期
     @Override
@@ -429,6 +432,21 @@ public class MainActivity extends Activity {
             });
         }
 
+        /**
+         * 在文件管理器里打开保存目录。
+         * which：last（最近一次保存的目录）/ download（下载 › 近传）/ camera（相册 › 相机）
+         * 跳不过去时会把真实路径复制到剪贴板并提示，保证用户始终有办法找到文件。
+         */
+        @JavascriptInterface
+        public void openFolder(final String which) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    openFolderInner(which);
+                }
+            });
+        }
+
         /** 全屏播放器旋转：landscape / portrait / auto */
         @JavascriptInterface
         public void setOrientation(final String mode) {
@@ -555,6 +573,73 @@ public class MainActivity extends Activity {
                 Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+    // ------------------------------------------------------------------ 打开保存目录
+    private void setLastFolder(String rel) {
+        lastSaveFolder = rel;
+        try {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("last_folder", rel).apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void openFolderInner(String which) {
+        String rel;
+        if ("camera".equals(which)) {
+            rel = Environment.DIRECTORY_DCIM + "/Camera";
+        } else if ("download".equals(which)) {
+            rel = Environment.DIRECTORY_DOWNLOADS + "/近传";
+        } else {
+            rel = lastSaveFolder;
+            if (rel == null || rel.isEmpty()) {
+                rel = getSharedPreferences(PREFS, MODE_PRIVATE).getString("last_folder", "");
+            }
+            if (rel == null || rel.isEmpty()) rel = Environment.DIRECTORY_DOWNLOADS + "/近传";
+        }
+        // 目录还没建出来（比如从来没存过非媒体文件）就往上退一级，别让文件管理器弹空目录或报错
+        String probe = rel;
+        for (int i = 0; i < 2 && !dirExists(probe); i++) {
+            int slash = probe.lastIndexOf('/');
+            probe = slash > 0 ? probe.substring(0, slash) : "";
+        }
+        if (openTree(probe)) return;
+        if (openTree("")) return;
+        String abs = "/storage/emulated/0/" + (rel.isEmpty() ? "" : rel + "/");
+        try {
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("neardrop-path", abs));
+            toast("这台手机不支持跳转，路径已复制：" + abs);
+        } catch (Exception e) {
+            toast("打不开文件管理器，路径：" + abs);
+        }
+    }
+
+    private boolean dirExists(String rel) {
+        try {
+            File f = new File(Environment.getExternalStorageDirectory(), rel);
+            return f.isDirectory();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 用系统文档界面（文件管理器）打开某个目录。
+     * rel 传空表示外部存储根目录。系统不认时会抛异常，交给调用方降级。
+     */
+    private boolean openTree(String rel) {
+        try {
+            String docId = (rel == null || rel.isEmpty()) ? "primary:" : "primary:" + rel;
+            Uri uri = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", docId);
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            i.setDataAndType(uri, "resource/folder");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            startActivity(i);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     /**
@@ -753,6 +838,7 @@ public class MainActivity extends Activity {
                 sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, item));
             } catch (Exception ignored) {
             }
+            setLastFolder(rel);
             if (mime.startsWith("image/") || mime.startsWith("video/")) return "已存到相册（相机）";
             return "已存到 文件管理 › 下载 › 近传";
         } else {
@@ -784,6 +870,9 @@ public class MainActivity extends Activity {
             android.media.MediaScannerConnection.scanFile(
                     this, new String[]{outFile.getAbsolutePath()},
                     new String[]{mime}, null);
+            setLastFolder(mime.startsWith("image/") || mime.startsWith("video/")
+                    ? Environment.DIRECTORY_DCIM + "/Camera"
+                    : Environment.DIRECTORY_DOWNLOADS + "/近传");
             if (mime.startsWith("image/") || mime.startsWith("video/")) return "已存到相册（相机）";
             return "已存到 文件管理 › 下载 › 近传";
         }

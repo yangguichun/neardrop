@@ -35,6 +35,7 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.File;
@@ -79,6 +80,10 @@ public class MainActivity extends Activity {
     private long recStart = 0;
     private String pendingConv = "room";
     private String pendingDevice = "";
+
+    // 保存任务的进度/结果要靠原生回传前端，前端挂上钩子后才用它，否则退回 Toast
+    private volatile boolean jsHooked = false;
+    private volatile boolean saving = false;
 
     // ------------------------------------------------------------------ 生命周期
     @Override
@@ -397,23 +402,37 @@ public class MainActivity extends Activity {
             return discoverServers();
         }
 
-        /** 下载并保存到相册（图片/视频）或下载目录 */
+        /** 前端脚本就绪标记：挂上 __ndSave 之后，保存进度就不再用原生 Toast */
+        @JavascriptInterface
+        public void jsReady() {
+            jsHooked = true;
+        }
+
+        /**
+         * 下载并保存到相册（图片/视频）或下载目录。
+         * 注意：这里是异步的，返回 "ok" 只代表任务已开始，绝不能再当成"保存成功"。
+         * 真正的结果通过 window.__ndSave(state, msg) 回传，state 为 start/progress/done/error。
+         */
         @JavascriptInterface
         public String saveUrl(final String url, final String name) {
+            if (saving) return "busy";
+            saving = true;
             final String full = url.startsWith("http") ? url : (server + url);
             final String finalName = (name == null || name.isEmpty()) ? ("neardrop_" + System.currentTimeMillis()) : name;
             new Thread(new Runnable() {
                 @Override
                 public void run() {
                     try {
+                        saveState("start", "正在保存…");
                         HttpURLConnection c = (HttpURLConnection) new URL(full).openConnection();
                         c.setConnectTimeout(8000);
                         c.setReadTimeout(120000);
+                        c.setRequestProperty("Accept-Encoding", "identity");
                         c.connect();
                         // 必须先看状态码：401/404 时拿到的是错误页，存下来就是一张打不开的"图"
                         int status = c.getResponseCode();
                         if (status != 200 && status != 206) {
-                            toast("保存失败：HTTP " + status);
+                            saveState("error", "保存失败：HTTP " + status);
                             return;
                         }
                         String mime = c.getContentType();
@@ -424,12 +443,19 @@ public class MainActivity extends Activity {
                         if (mime.isEmpty() || mime.equals("application/octet-stream")) {
                             mime = guessMime(finalName);
                         }
-                        InputStream in = c.getInputStream();
-                        String where = saveStream(in, finalName, mime);
+                        long total = -1;
+                        try {
+                            total = c.getContentLengthLong();
+                        } catch (Throwable ignored) {
+                        }
+                        InputStream in = new BufferedInputStream(c.getInputStream(), 262144);
+                        String where = saveStream(in, finalName, mime, total);
                         in.close();
-                        toast(where);
+                        saveState("done", where);
                     } catch (Exception e) {
-                        toast("保存失败：" + e.getMessage());
+                        saveState("error", "保存失败：" + e.getMessage());
+                    } finally {
+                        saving = false;
                     }
                 }
             }).start();
@@ -482,6 +508,28 @@ public class MainActivity extends Activity {
                 Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+    /**
+     * 把保存状态回传前端。前端挂了 window.__ndSave 就用它（能显示百分比进度、也不会提前报成功），
+     * 没挂上则退回原生 Toast，保证任何情况下用户都能得到一次真实的结果提示。
+     */
+    private void saveState(final String state, final String msg) {
+        if (jsHooked) {
+            final String js = "window.__ndSave&&window.__ndSave("
+                    + JSONObject.quote(state) + "," + JSONObject.quote(msg) + ");";
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        web.evaluateJavascript(js, null);
+                    } catch (Exception ignored) {
+                    }
+                }
+            });
+        } else if ("done".equals(state) || "error".equals(state)) {
+            toast(msg);
+        }
     }
 
     // ------------------------------------------------------------------ 录音
@@ -625,7 +673,7 @@ public class MainActivity extends Activity {
     // ------------------------------------------------------------------ 保存到相册
     // 存到系统相机目录 DCIM/Camera：华为/荣耀图库只稳定索引这个目录和 Pictures 根目录，
     // 之前存 Pictures/近传 会出现「提示保存成功、相册里找不到」。
-    private String saveStream(InputStream in, String name, String mime) throws Exception {
+    private String saveStream(InputStream in, String name, String mime, long total) throws Exception {
         if (Build.VERSION.SDK_INT >= 29) {
             ContentResolver resolver = getContentResolver();
             Uri collection;
@@ -648,7 +696,7 @@ public class MainActivity extends Activity {
             Uri item = resolver.insert(collection, v);
             if (item == null) throw new Exception("无法创建文件");
             OutputStream out = resolver.openOutputStream(item);
-            copy(in, out);
+            copy(in, out, total);
             out.close();
             v.clear();
             v.put(MediaStore.MediaColumns.IS_PENDING, 0);
@@ -683,7 +731,7 @@ public class MainActivity extends Activity {
                 outFile = new File(dir, base + "_" + (i++) + ext);
             }
             FileOutputStream fos = new FileOutputStream(outFile);
-            copy(in, fos);
+            copy(in, fos, total);
             fos.close();
             // 通知相册刷新
             android.media.MediaScannerConnection.scanFile(
@@ -694,10 +742,23 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static void copy(InputStream in, OutputStream out) throws Exception {
-        byte[] buf = new byte[65536];
+    /** 带进度的拷贝：每超过 5% 回传一次，避免刷屏；具体写了多少以字节为准 */
+    private void copy(InputStream in, OutputStream out, long total) throws Exception {
+        byte[] buf = new byte[262144];
         int n;
-        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        long done = 0;
+        int lastPct = -5;
+        while ((n = in.read(buf)) > 0) {
+            out.write(buf, 0, n);
+            done += n;
+            if (total > 0) {
+                int pct = (int) (done * 100 / total);
+                if (pct >= lastPct + 5) {
+                    lastPct = pct;
+                    saveState("progress", String.valueOf(Math.min(pct, 99)));
+                }
+            }
+        }
         out.flush();
     }
 

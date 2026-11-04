@@ -855,15 +855,20 @@
   }
 
   // ---------------------------------------------------------------- 保存
+  var saving = false;   // 保存任务进行中，避免重复点重复下载
   function saveMsg(m) {
     saveToLocal(fileUrl(m.file_id, true), m.file_name || ('neardrop_' + m.file_id), m.mime || '');
   }
 
   function saveToLocal(url, name, mime) {
     if (isApp && window.NearDrop && window.NearDrop.saveUrl) {
+      if (saving) { toast('上一个还在保存中'); return; }
       try {
         var r = window.NearDrop.saveUrl(url, name);
-        toast(r === 'ok' ? '已保存到相册/下载' : '保存中…');
+        // saveUrl 是异步的，返回 ok 只代表任务已开始，不能当成保存成功
+        if (r === 'busy') { toast('上一个还在保存中'); return; }
+        saving = true;
+        toast('正在保存…', 60000);
       } catch (e) { toast('保存失败'); }
       return;
     }
@@ -875,6 +880,18 @@
     a.click();
     setTimeout(function () { a.remove(); }, 300);
     toast('已开始下载');
+  }
+
+  // 原生回传保存进度：start / progress / done / error
+  window.__ndSave = function (state, msg) {
+    if (state === 'start') { saving = true; toast('正在保存…', 60000); return; }
+    if (state === 'progress') { toast('正在保存 ' + msg + '%', 60000); return; }
+    saving = false;
+    if (state === 'done') { toast(msg || '已保存', 2500); return; }
+    toast(msg || '保存失败', 3000);
+  };
+  if (isApp && window.NearDrop && window.NearDrop.jsReady) {
+    try { window.NearDrop.jsReady(); } catch (e) {}
   }
 
   // ---------------------------------------------------------------- 预览

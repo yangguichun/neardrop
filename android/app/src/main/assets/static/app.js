@@ -863,6 +863,7 @@
   function saveToLocal(url, name, mime) {
     if (isApp && window.NearDrop && window.NearDrop.saveUrl) {
       if (saving) { toast('上一个还在保存中'); return; }
+      pauseViewerVideo();   // 边播边存会抢同一个 Wi-Fi，先把播放器停下
       try {
         var r = window.NearDrop.saveUrl(url, name);
         // saveUrl 是异步的，返回 ok 只代表任务已开始，不能当成保存成功
@@ -882,12 +883,20 @@
     toast('已开始下载');
   }
 
+  // 预览窗口里正在播的视频，保存时先暂停，避免和下载抢带宽
+  function pauseViewerVideo() {
+    try {
+      var v = document.querySelector('#viewerBody video');
+      if (v && !v.paused) v.pause();
+    } catch (e) {}
+  }
+
   // 原生回传保存进度：start / progress / done / error
   window.__ndSave = function (state, msg) {
     if (state === 'start') { saving = true; toast('正在保存…', 60000); return; }
-    if (state === 'progress') { toast('正在保存 ' + msg + '%', 60000); return; }
+    if (state === 'progress') { toast('正在保存 ' + msg, 60000); return; }
     saving = false;
-    if (state === 'done') { toast(msg || '已保存', 2500); return; }
+    if (state === 'done') { toast(msg || '已保存', 3000); return; }
     toast(msg || '保存失败', 3000);
   };
   if (isApp && window.NearDrop && window.NearDrop.jsReady) {

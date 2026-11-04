@@ -21,6 +21,7 @@ from typing import Optional, List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Request, Query
 from fastapi.responses import FileResponse, JSONResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from .store import Store
 
@@ -567,10 +568,12 @@ async def api_upload(
     if members and device not in members:
         raise HTTPException(403, "无权发送")
     mime = file.content_type or ""
-    info = store.save_file(file.file, file.filename or "file", mime)
+    # save_file 是阻塞写盘，必须丢到线程池，否则大文件传完那一刻整个事件循环被占住，
+    # 同时进来的下载/保存请求会明显卡一下（实测从 110MB/s 掉到 30MB/s）。
+    info = await run_in_threadpool(store.save_file, file.file, file.filename or "file", mime)
     mime = info["mime"]
     if mime.startswith("image/"):
-        make_thumb(store.get_file(info["file_id"])["path"], info["file_id"])
+        await run_in_threadpool(make_thumb, store.get_file(info["file_id"])["path"], info["file_id"])
         mtype = "image"
     elif mime.startswith("video/"):
         mtype = "video"

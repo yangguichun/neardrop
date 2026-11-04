@@ -449,8 +449,14 @@ public class MainActivity extends Activity {
                         } catch (Throwable ignored) {
                         }
                         InputStream in = new BufferedInputStream(c.getInputStream(), 262144);
+                        long tStart = System.currentTimeMillis();
                         String where = saveStream(in, finalName, mime, total);
                         in.close();
+                        long dt = Math.max(1, System.currentTimeMillis() - tStart);
+                        if (total > 0) {
+                            where = where + " · " + Math.round(total / 1048576.0) + "MB / "
+                                    + String.format(java.util.Locale.US, "%.0f", dt / 1000.0) + "s";
+                        }
                         saveState("done", where);
                     } catch (Exception e) {
                         saveState("error", "保存失败：" + e.getMessage());
@@ -742,11 +748,12 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** 带进度的拷贝：每超过 5% 回传一次，避免刷屏；具体写了多少以字节为准 */
+    /** 带进度的拷贝：每超过 5% 回传一次，避免刷屏；消息里带实时速度，方便判断是不是网络慢 */
     private void copy(InputStream in, OutputStream out, long total) throws Exception {
         byte[] buf = new byte[262144];
         int n;
         long done = 0;
+        long t0 = System.currentTimeMillis();
         int lastPct = -5;
         while ((n = in.read(buf)) > 0) {
             out.write(buf, 0, n);
@@ -755,7 +762,10 @@ public class MainActivity extends Activity {
                 int pct = (int) (done * 100 / total);
                 if (pct >= lastPct + 5) {
                     lastPct = pct;
-                    saveState("progress", String.valueOf(Math.min(pct, 99)));
+                    double sec = Math.max(0.001, (System.currentTimeMillis() - t0) / 1000.0);
+                    double mbps = done / 1048576.0 / sec;
+                    saveState("progress", Math.min(pct, 99) + "% · "
+                            + String.format(java.util.Locale.US, "%.1f", mbps) + " MB/s");
                 }
             }
         }
